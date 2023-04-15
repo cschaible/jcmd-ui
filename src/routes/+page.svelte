@@ -1,4 +1,6 @@
 <script>
+    import JvmProcessList from "$lib/jvm-process-list.svelte";
+
     let ms = 1000
     let counter = 0
     const incr = () => (counter += 1)
@@ -17,3 +19,4 @@
 <p>{counter}</p>
 <input type="number" bind:value={ms} step="500" min="0" max="5000"/>
 <button on:click="{reset}">Reset</button>
+<JvmProcessList/>

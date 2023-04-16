@@ -27,6 +27,7 @@ static CACHE: Lazy<Mutex<MetricsCache>> = Lazy::new(|| Mutex::new(MetricsCache {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![get_jvm_processes, get_jvm_metrics, get_vm_information, reset])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

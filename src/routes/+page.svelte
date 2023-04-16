@@ -1,22 +1,21 @@
 <script>
     import JvmProcessList from "$lib/jvm-process-list.svelte";
+    import JvmMetrics from "$lib/jvm-metrics.svelte";
+    import {Styles} from "sveltestrap";
 
-    let ms = 1000
-    let counter = 0
-    const incr = () => (counter += 1)
-    const reset = () => (counter = 0)
+    let processId;
 
-    let clear
-    $: {
-        clearInterval(clear)
-        clear = setInterval(incr, ms)
-    }
 </script>
+<Styles/>
 
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://kit.svelte.dev">kit.svelte.dev</a> to read the documentation</p>
 
-<p>{counter}</p>
-<input type="number" bind:value={ms} step="500" min="0" max="5000"/>
-<button on:click="{reset}">Reset</button>
-<JvmProcessList/>
+<div class="cbody">
+    <JvmProcessList bind:processId/>
+    <JvmMetrics bind:processId/>
+</div>
+
+<style>
+    .cbody {
+        margin: 10px;
+    }
+</style>

@@ -7,7 +7,7 @@ use serde::Serialize;
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_jvm_processes])
+        .invoke_handler(tauri::generate_handler![get_jvm_processes, get_jvm_metrics])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -21,6 +21,9 @@ fn get_jvm_processes() -> Result<JvmProcesses, String> {
                 let lines: Vec<&str> = output.split("\n").collect();
                 let mut processes: Vec<JvmProcessRef> = Vec::new();
                 for line in lines {
+                    if (&line).contains("jdk.jcmd") {
+                        continue;
+                    }
                     let parts: Vec<&str> = line.split(" ").collect();
                     if parts.len() < 2 {
                         continue;
@@ -54,6 +57,11 @@ fn get_jvm_processes() -> Result<JvmProcesses, String> {
         }
         Err(e) => Err(e.to_string())
     }
+}
+
+#[tauri::command]
+fn get_jvm_metrics(pid: &str) -> Result<String, String> {
+    Ok(format!("{}", pid))
 }
 
 #[derive(Serialize)]

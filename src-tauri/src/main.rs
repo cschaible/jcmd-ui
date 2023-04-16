@@ -4,6 +4,7 @@ windows_subsystem = "windows"
 )]
 
 use std::collections::HashMap;
+use std::process::Command;
 use std::string::ToString;
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -42,9 +43,17 @@ fn reset() {
     c.thread_metrics.values.clear();
 }
 
+fn jcmd() -> Command {
+    let path = match std::env::var("JCMD") {
+        Ok(p) => p,
+        Err(_) => "jcmd".to_string()
+    };
+    Command::new(path)
+}
+
 #[tauri::command]
 fn get_jvm_processes() -> Result<JvmProcesses, String> {
-    match std::process::Command::new("jcmd").output() {
+    match jcmd().output() {
         Ok(o) => {
             if o.status.success() {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
@@ -91,7 +100,7 @@ fn get_jvm_processes() -> Result<JvmProcesses, String> {
 
 #[tauri::command]
 fn get_vm_information(pid: &str) -> Result<VmInformation, String> {
-    match std::process::Command::new("jcmd").arg(pid).arg("VM.info").output() {
+    match jcmd().arg(pid).arg("VM.info").output() {
         Ok(o) => {
             if o.status.success() {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
@@ -160,7 +169,7 @@ fn get_vm_information(pid: &str) -> Result<VmInformation, String> {
 
 #[tauri::command]
 fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
-    match std::process::Command::new("jcmd").arg(pid).arg("VM.native_memory").arg("scale=b").output() {
+    match jcmd().arg(pid).arg("VM.native_memory").arg("scale=b").output() {
         Ok(o) => {
             if o.status.success() {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();

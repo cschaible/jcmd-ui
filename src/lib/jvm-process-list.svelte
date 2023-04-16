@@ -26,12 +26,17 @@
     function selectedItem(item) {
         processId = item.id;
         selectedProcess = item;
+        resetCache()
         return true
+    }
+
+    function resetCache() {
+        invoke('reset');
     }
 
 </script>
 
-<div class="mb-3">
+<div class="jvm-process-list mb-3">
     <Dropdown group size="sm">
         <DropdownToggle caret>
             {#if selectedProcess === undefined}

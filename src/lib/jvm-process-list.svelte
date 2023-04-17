@@ -11,6 +11,9 @@
     async function getJvmProcesses() {
         let res = await invoke('get_jvm_processes');
         processes = res.processes;
+        processes = processes.sort(function (a, b) {
+            return b.id - a.id;
+        });
         selectedProcess = undefined;
     }
 
@@ -72,7 +75,7 @@
     }
 
     .dropDownItem {
-        max-width: 300px;
+        max-width: 450px;
         overflow: hidden;
         text-overflow: ellipsis;
     }

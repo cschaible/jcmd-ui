@@ -37,15 +37,15 @@
 
             let total = reservedCommittedMemoryChart(m.totalMemory.values, "Total");
             if (total != null) {
-                charts.concat(total);
+                charts = charts.concat(total);
             }
             let clazz = reservedCommittedMemoryChart(m.class.values, "Class");
             if (clazz != null) {
-                charts.concat(clazz);
+                charts = charts.concat(clazz);
             }
             let thread = reservedCommittedMemoryChart(m.thread.values, "Thread");
             if (thread != null) {
-                charts.concat(thread);
+                charts = charts.concat(thread);
             }
             for (let t of m.other) {
                 let o = reservedCommittedMemoryChart(t.values, t.name);

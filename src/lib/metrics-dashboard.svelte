@@ -32,7 +32,7 @@
     }
 
     function otherMemory(m) {
-        if (m !== undefined) {
+        if (m !== undefined && m.totalMemory !== undefined && m.totalMemory.values !== undefined) {
             charts = [];
 
             let total = reservedCommittedMemoryChart(m.totalMemory.values, "Total");
@@ -107,11 +107,12 @@
                 committed.push(v.committed / divisor);
             }
 
-            let reservedDataset = newDataSet(type + " - Reserved Memory (" + unit + ")", reserved, 'yellow');
-            let committedDataset = newDataSet(type + " - Committed Memory(" + unit + ")", committed, 'green');
+            let reservedDataset = newDataSet("Reserved (" + unit + ")", reserved, 'orange');
+            let committedDataset = newDataSet("Committed (" + unit + ")", committed, 'green');
 
             return {
                 labels: labels,
+                title: type,
                 datasets: [reservedDataset, committedDataset]
             };
         }
@@ -121,36 +122,58 @@
     $: total = totalMemory(metrics);
 
     function newDataSet(label, data, color) {
+        let pointRadius
+        if (data.length <= 25) {
+            pointRadius = 3;
+        } else {
+            pointRadius = 2;
+        }
         return {
             label: label,
             data: data,
-            fill: false,
+            fill: true,
+            backgroundColor: color,
             borderColor: color,
+            pointHoverRadius: 5,
+            pointHoverBackgroundColor: "rgb(0, 0, 0)",
+            pointHoverBorderColor: "rgba(220, 220, 220, 1)",
+            pointHoverBorderWidth: 1,
+            pointHitRadius: 10,
+            pointRadius: pointRadius,
             tension: 0.1
         }
     }
 
 </script>
 
-<div class="columns">
-    <!--div class="column">
-        <Line data={total} class="metric_chart" options={{ responsive: true, animation: { duration: 0 },
-            scale: { ticks: { precision: 1 } }}}/>
-    </div>
-    <div class="column">
-        <Line data={classes} class="metric_chart" options={{ responsive: true, animation: { duration: 0 },
-            scale: { ticks: { precision: 1 } }}}/>
-    </div>
-    <div class="column">
-        <Line data={thread} class="metric_chart" options={{ responsive: true, animation: { duration: 0 },
-            scale: { ticks: { precision: 1 } }}}/>
-    </div-->
-    {#each charts as m}
-        <div class="column">
-            <Line data={m} class="metric_chart" options={{ responsive: true, animation: { duration: 0 },
+<div class="memory-dashboard">
+    <div class="columns">
+        {#each charts as m}
+            <div class="column">
+                <Line data={m} class="metric_chart" options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                plugins: {
+                    legend: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: m.title,
+                            font: {
+                                size: 14,
+                                weight: 'bold'
+                            }
+                        }
+                    }
+                },
                 scale: { ticks: { precision: 1 } }}}/>
-        </div>
-    {/each}
+            </div>
+        {/each}
+        {#if !(Array.isArray(charts) && charts.length > 0)}
+            No data to available
+        {/if}
+    </div>
 </div>
 
 
@@ -164,7 +187,9 @@
     .column {
         width: calc(100% / 2);
         min-height: 300px;
-
     }
 
+    .column :global(.metric_chart) {
+        padding: 5px;
+    }
 </style>

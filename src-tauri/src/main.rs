@@ -92,7 +92,7 @@ fn get_jvm_processes() -> Result<JvmProcesses, String> {
 
                 return Ok(JvmProcesses { processes });
             }
-            return Err("Data couldn't be read successfully from jcmd".to_string());
+            return Err("Data couldn't be read successfully".to_string());
         }
         Err(e) => Err(e.to_string())
     }
@@ -161,7 +161,7 @@ fn get_vm_information(pid: &str) -> Result<VmInformation, String> {
                     vm_resources,
                 });
             }
-            return Err("Data couldn't be read successfully from jcmd".to_string());
+            return Err("Data couldn't be read successfully".to_string());
         }
         Err(e) => Err(e.to_string())
     }
@@ -261,7 +261,7 @@ fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
                 };
                 return Ok(jvm_metrics);
             }
-            return Err("Data couldn't be read successfully from jcmd".to_string());
+            return Err("Data couldn't be read successfully".to_string());
         }
         Err(e) => Err(e.to_string())
     }

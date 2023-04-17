@@ -5,7 +5,11 @@
     import ProcessInformation from "$lib/process-information.svelte";
     import MetricsDashboard from "$lib/metrics-dashboard.svelte";
 
+    export let error = undefined;
+
     export let processId = undefined;
+
+    export let showProgressSpinner;
 
     let metrics
     let vmInformation
@@ -37,18 +41,25 @@
     async function getJvmMetrics() {
         let pid = await processId;
         if (pid !== undefined) {
-            metrics = await invoke('get_jvm_metrics', {pid});
+            metrics = await invoke('get_jvm_metrics', {pid}).catch((e) => error = e);
         } else {
-            metrics = undefined;
+            if (metrics !== undefined) {
+                error = "The connection to the process has been stopped";
+            }
+            // Do not unset metrics to keep them visible when the connection was interrupted
         }
     }
 
     async function getVmInformation() {
         let pid = await processId;
         if (pid !== undefined) {
-            vmInformation = await invoke('get_vm_information', {pid});
+            vmInformation = await invoke('get_vm_information', {pid}).catch((e) => error = e);
+            showProgressSpinner = false;
         } else {
             vmInformation = undefined;
+            // Unset metrics to remove metrics if a new process was selected which doesn't
+            // have native memory tracking enabled.
+            metrics = undefined;
         }
     }
 
@@ -71,6 +82,10 @@
     }
 
     .tab-bar :global(.process-information) {
+        padding: 10px;
+    }
+
+    .tab-bar :global(.memory-dashboard) {
         padding: 10px;
     }
 </style>

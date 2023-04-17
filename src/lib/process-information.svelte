@@ -1,13 +1,9 @@
 <script>
-    import {Spinner} from "sveltestrap";
-
     export let vmInformation = undefined;
 
     function jvmArgs() {
         return vmInformation.vmArguments.jvmArgs.split(" ");
     }
-
-    let color = 'primary';
 </script>
 
 <div class="process-information">
@@ -45,7 +41,6 @@
         {/if}
     {:else }
         No process information available
-        <Spinner {color} size="sm"/>
     {/if}
 
 </div>

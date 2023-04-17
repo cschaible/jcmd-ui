@@ -1,15 +1,18 @@
 <script>
     import {invoke} from '@tauri-apps/api/tauri'
     import {onMount} from "svelte";
-    import {Dropdown, DropdownItem, DropdownMenu, DropdownToggle, Icon} from "sveltestrap";
+    import {Dropdown, DropdownItem, DropdownMenu, DropdownToggle, Icon, Spinner} from "sveltestrap";
 
-    export let processId;
+    export let error = undefined;
+
+    export let processId = undefined;
+    export let showProgressSpinner = undefined;
 
     let selectedProcess
     let processes = [];
 
     async function getJvmProcesses() {
-        let res = await invoke('get_jvm_processes');
+        let res = await invoke('get_jvm_processes').catch((e) => error = e);
         processes = res.processes;
         processes = processes.sort(function (a, b) {
             return b.id - a.id;
@@ -23,12 +26,15 @@
 
     function reloadProcessed() {
         processId = undefined;
+        error = undefined;
         getJvmProcesses();
     }
 
     function selectedItem(item) {
         processId = item.id;
         selectedProcess = item;
+        showProgressSpinner = true
+        error = undefined;
         resetCache()
         return true
     }
@@ -37,6 +43,7 @@
         invoke('reset');
     }
 
+    let color = 'secondary';
 </script>
 
 <div class="jvm-process-list mb-3">
@@ -67,6 +74,14 @@
     <span class="dropDownIcon" on:click={reloadProcessed}>
         <Icon name="arrow-clockwise" class="align-middle"/>
     </span>
+    {#if showProgressSpinner !== undefined && showProgressSpinner === true}
+        <Spinner class="progress-spinner align-middle" {color} size="sm" type="grow"/>
+    {/if}
+    {#if error !== undefined}
+        <span class="process-error" title="{error}">
+            <Icon name="exclamation-triangle" class="align-middle"/>
+        </span>
+    {/if}
 </div>
 
 <style>
@@ -86,5 +101,13 @@
         text-overflow: ellipsis;
         float: left;
         margin-right: 6px;
+    }
+
+    .jvm-process-list :global(.progress-spinner) {
+        margin-left: 5px;
+    }
+
+    .jvm-process-list :global(.process-error) {
+        margin-left: 5px;
     }
 </style>

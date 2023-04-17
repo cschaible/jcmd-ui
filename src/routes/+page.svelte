@@ -4,13 +4,14 @@
     import {Styles} from "sveltestrap";
 
     let processId;
-
+    let showProgressSpinner;
+    let error;
 </script>
 <Styles/>
 
 <div class="main-page">
-    <JvmProcessList bind:processId/>
-    <JvmProcess bind:processId/>
+    <JvmProcessList bind:error bind:processId bind:showProgressSpinner/>
+    <JvmProcess bind:error bind:processId bind:showProgressSpinner/>
 </div>
 
 <style>

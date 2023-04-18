@@ -8,6 +8,7 @@ use std::process::Command;
 use std::string::ToString;
 use std::sync::Mutex;
 use std::time::SystemTime;
+
 use once_cell::sync::Lazy;
 use serde::Serialize;
 
@@ -25,6 +26,8 @@ static CACHE: Lazy<Mutex<MetricsCache>> = Lazy::new(|| Mutex::new(MetricsCache {
     },
     other_metrics: HashMap::new(),
 }));
+
+static JCMD: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("".to_string()));
 
 fn main() {
     tauri::Builder::default()
@@ -44,10 +47,19 @@ fn reset() {
 }
 
 fn jcmd() -> Command {
-    let path = match std::env::var("JCMD") {
-        Ok(p) => p,
-        Err(_) => "jcmd".to_string()
-    };
+    let mut cmd = JCMD.lock().unwrap();
+    let mut path = (*cmd).clone();
+    if *cmd == "".to_string() {
+        let p = match std::env::var("JAVA_HOME") {
+            Ok(p) => format!("{}/bin/jcmd", p),
+            Err(_) => match std::env::var("JCMD") {
+                Ok(p) => p,
+                Err(_) => "jcmd".to_string()
+            }
+        };
+        *cmd = p.clone();
+        path = p
+    }
     Command::new(path)
 }
 

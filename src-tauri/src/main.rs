@@ -20,6 +20,14 @@ static CACHE: Lazy<Mutex<MetricsCache>> = Lazy::new(|| Mutex::new(MetricsCache {
         name: "Class".to_string(),
         values: Vec::new(),
     },
+    heap_metrics: HeapMemoryMetric {
+        name: "Heap".to_string(),
+        values: Vec::new(),
+    },
+    metaspace_metrics: MetaspaceMemoryMetric {
+        name: "Metaspace".to_string(),
+        values: Vec::new(),
+    },
     thread_metrics: ThreadMemoryMetric {
         name: "Thread".to_string(),
         values: Vec::new(),
@@ -41,8 +49,10 @@ fn main() {
 fn reset() {
     let mut c = CACHE.lock().unwrap();
     c.class_metrics.values.clear();
-    c.total_memory.values.clear();
+    c.heap_metrics.values.clear();
+    c.metaspace_metrics.values.clear();
     c.other_metrics.clear();
+    c.total_memory.values.clear();
     c.thread_metrics.values.clear();
 }
 
@@ -181,6 +191,42 @@ fn get_vm_information(pid: &str) -> Result<VmInformation, String> {
 
 #[tauri::command]
 fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
+    let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
+    let mut heap_size = None;
+    let mut metaspace_size = None;
+    let mut class_space_size = None;
+
+    // Parse committed / reserved sizes from heap info as they seem to be more accurate
+    // than the values from the native memory tracking.
+    let mut metaspace_committed = None;
+    let mut metaspace_reserved = None;
+    let mut class_space_committed = None;
+    let mut class_space_reserved = None;
+
+    match jcmd().arg(pid).arg("GC.heap_info").output() {
+        Ok(o) => {
+            let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
+            if (&output).contains("IOException: No such process") {
+                return Err("No such process".to_string());
+            }
+
+            let rows: Vec<&str> = output.split("\n").collect();
+            for row in rows {
+                if row.starts_with(" garbage-first") {
+                    heap_size = parse_memory_from_heap_info(row, "used");
+                } else if row.starts_with(" Metaspace") {
+                    metaspace_size = parse_memory_from_heap_info(row, "used");
+                    metaspace_committed = parse_memory_from_heap_info(row, "committed");
+                    metaspace_reserved = parse_memory_from_heap_info(row, "reserved");
+                } else if row.starts_with("  class space") {
+                    class_space_size = parse_memory_from_heap_info(row, "used");
+                    class_space_committed = parse_memory_from_heap_info(row, "committed");
+                    class_space_reserved = parse_memory_from_heap_info(row, "reserved");
+                }
+            }
+        }
+        Err(e) => return Err(e.to_string())
+    };
     match jcmd().arg(pid).arg("VM.native_memory").arg("scale=b").output() {
         Ok(o) => {
             if o.status.success() {
@@ -191,8 +237,6 @@ fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
                     return Err("Native memory tracking not activated. Start application with java \
                     -XX:NativeMemoryTracking=summary -jar ...".to_string());
                 }
-
-                let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
 
                 let rows: Vec<&str> = output.split("\n").collect();
                 let mut buffer: Vec<String> = Vec::new();
@@ -210,15 +254,12 @@ fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
                                 };
                                 CACHE.lock().unwrap().total_memory.values.push(total_memory_metric)
                             } else if buffer_row.starts_with("-") && buffer_row.contains("Class") {
-                                let cleaned_row = buffer_row.replace("-", "").replace("Class", "").replace("(", "").replace(")", "")
-                                    .replace(",", "");
-                                let values: Vec<&str> = cleaned_row.split(" ").collect();
-                                let (reserved, committed) = parse_reserved_committed(values);
                                 let class_memory_metric = ClassMemoryMetricValue {
                                     time,
-                                    reserved,
-                                    committed,
+                                    reserved: class_space_reserved,
+                                    committed: class_space_committed,
                                     class_count: 0,
+                                    used: class_space_size,
                                 };
                                 CACHE.lock().unwrap().class_metrics.values.push(class_memory_metric)
                             } else if buffer_row.starts_with("-") && buffer_row.contains("Thread") {
@@ -233,6 +274,27 @@ fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
                                     thread_count: 0,
                                 };
                                 CACHE.lock().unwrap().thread_metrics.values.push(thread_memory_metric);
+                            } else if buffer_row.starts_with("-") && buffer_row.contains("Java Heap") {
+                                let cleaned_row = buffer_row.replace("-", "").replace("Java Heap", "").replace("(", "").replace(")", "")
+                                    .replace(",", "");
+                                let values: Vec<&str> = cleaned_row.split(" ").collect();
+
+                                let (reserved, committed) = parse_reserved_committed(values);
+                                let heap_memory_metric = HeapMemoryMetricValue {
+                                    time,
+                                    reserved,
+                                    committed,
+                                    used: heap_size,
+                                };
+                                CACHE.lock().unwrap().heap_metrics.values.push(heap_memory_metric);
+                            } else if buffer_row.starts_with("-") && buffer_row.contains("Metaspace") {
+                                let metaspace_memory_metric = MetaspaceMemoryMetricValue {
+                                    time,
+                                    reserved: metaspace_reserved,
+                                    committed: metaspace_committed,
+                                    used: metaspace_size,
+                                };
+                                CACHE.lock().unwrap().metaspace_metrics.values.push(metaspace_memory_metric);
                             } else if buffer_row.starts_with("-") {
                                 let cleaned_row = buffer_row.replace("-", "").replace("(", "").replace(")", "")
                                     .replace(",", "");
@@ -268,6 +330,8 @@ fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
                 let jvm_metrics = JvmMetrics {
                     total_memory: c.total_memory.clone(),
                     class: c.class_metrics.clone(),
+                    heap: c.heap_metrics.clone(),
+                    metaspace: c.metaspace_metrics.clone(),
                     thread: c.thread_metrics.clone(),
                     other: c.other_metrics.values().into_iter().map(|o| o.clone()).collect(),
                 };
@@ -308,6 +372,18 @@ fn parse_name_reserved_committed(parts: Vec<&str>) -> (Option<String>, Option<u6
     return (name, reserved, committed);
 }
 
+fn parse_memory_from_heap_info(row: &str, memory_type: &str) -> Option<u64> {
+    let parts: Vec<&str> = row.split(" ").collect();
+    for (i, p) in parts.iter().enumerate() {
+        if p == &memory_type {
+            let size_string = parts.get(i + 1).unwrap();
+            let size = size_string.replace("K", "").replace(",", "").trim().parse::<u64>().unwrap();
+            return Some(size * 1024);
+        }
+    }
+    None
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VmInformation {
@@ -337,6 +413,8 @@ pub struct VmResources {
 pub struct JvmMetrics {
     total_memory: TotalMemoryMetric,
     class: ClassMemoryMetric,
+    heap: HeapMemoryMetric,
+    metaspace: MetaspaceMemoryMetric,
     thread: ThreadMemoryMetric,
     other: Vec<GenericMemoryMetric>,
 }
@@ -370,6 +448,39 @@ pub struct ClassMemoryMetricValue {
     class_count: u32,
     reserved: Option<u64>,
     committed: Option<u64>,
+    used: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaspaceMemoryMetric {
+    name: String,
+    values: Vec<MetaspaceMemoryMetricValue>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaspaceMemoryMetricValue {
+    time: u128,
+    reserved: Option<u64>,
+    committed: Option<u64>,
+    used: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeapMemoryMetric {
+    name: String,
+    values: Vec<HeapMemoryMetricValue>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeapMemoryMetricValue {
+    time: u128,
+    reserved: Option<u64>,
+    committed: Option<u64>,
+    used: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -417,6 +528,8 @@ pub struct JvmProcessRef {
 struct MetricsCache {
     total_memory: TotalMemoryMetric,
     class_metrics: ClassMemoryMetric,
+    heap_metrics: HeapMemoryMetric,
+    metaspace_metrics: MetaspaceMemoryMetric,
     thread_metrics: ThreadMemoryMetric,
     other_metrics: HashMap<String, GenericMemoryMetric>,
 }

@@ -3,7 +3,7 @@
 
     import {
         CategoryScale,
-        Chart as ChartJS,
+        Chart as ChartJS, Filler,
         Legend,
         LinearScale,
         LineElement,
@@ -13,6 +13,7 @@
     } from "chart.js";
 
     ChartJS.register(
+        Filler,
         Title,
         Tooltip,
         Legend,
@@ -43,6 +44,14 @@
             if (clazz != null) {
                 charts = charts.concat(clazz);
             }
+            let heap = reservedCommittedMemoryChart(m.heap.values, "Heap");
+            if (heap != null) {
+                charts = charts.concat(heap);
+            }
+            let metaspace = reservedCommittedMemoryChart(m.metaspace.values, "Metaspace");
+            if (metaspace != null) {
+                charts = charts.concat(metaspace);
+            }
             let thread = reservedCommittedMemoryChart(m.thread.values, "Thread");
             if (thread != null) {
                 charts = charts.concat(thread);
@@ -56,11 +65,25 @@
 
             charts = charts.sort(function (a, b) {
                 let x = arrayMaxCommitted(a.datasets[1].data);
+                let xUnitMultiplicator = getChartUnitMultiplicator(a.datasets[1].label)
                 let y = arrayMaxCommitted(b.datasets[1].data);
-                return y - x;
+                let yUnitMultiplicator = getChartUnitMultiplicator(b.datasets[1].label)
+                return (y * yUnitMultiplicator) - (x * xUnitMultiplicator);
             });
         }
         return undefined;
+    }
+
+    function getChartUnitMultiplicator(value) {
+        if (value.includes("(GB)")) {
+            return 1073741824;
+        } else if (value.includes("(MB)")) {
+            return 1048576;
+        } else if (value.includes("KB")) {
+            return 1024
+        } else {
+            return 1;
+        }
     }
 
     function arrayMaxCommitted(arr) {
@@ -69,9 +92,7 @@
 
     function reservedCommittedMemoryChart(values, type) {
         if (values !== undefined) {
-            let labels = [];
-            let reserved = [];
-            let committed = [];
+
             let min = Math.pow(2, 63) - 1;
             for (const v of values) {
                 if (v.reserved < min) {
@@ -79,6 +100,9 @@
                 }
                 if (v.committed < min) {
                     min = v.committed
+                }
+                if (v.used !== undefined && v.used < min) {
+                    min = v.used
                 }
             }
 
@@ -99,21 +123,37 @@
                 return null;
             }
 
+            let labels = [];
+            let reserved = [];
+            let committed = [];
+            let used = [];
             for (const v of values) {
                 let d = new Date(0)
                 d.setUTCMilliseconds(v.time);
                 labels.push(d.toLocaleTimeString());
                 reserved.push(v.reserved / divisor);
                 committed.push(v.committed / divisor);
+                if (v.used !== undefined) {
+                    used.push(v.used / divisor);
+                }
             }
 
-            let reservedDataset = newDataSet("Reserved (" + unit + ")", reserved, 'orange');
-            let committedDataset = newDataSet("Committed (" + unit + ")", committed, 'green');
+            let datasets;
+            if (used.length > 0) {
+                let reservedDataset = newDataSet("Reserved (" + unit + ")", reserved, 'rgba(123,123,123,0.75)', 'rgba(123,123,123,0.05)', "+1");
+                let committedDataset = newDataSet("Committed (" + unit + ")", committed, 'rgba(243,101,12,0.75)', 'rgba(243,101,12,0.1)', "+1");
+                let usedDataset = newDataSet(" Used (" + unit + ")", used, 'rgba(125,176,227,0.75)', 'rgba(125,176,227,0.35)', true);
+                datasets = [reservedDataset, committedDataset, usedDataset];
+            } else {
+                let reservedDataset = newDataSet("Reserved (" + unit + ")", reserved, 'rgba(123,123,123,0.75)', 'rgba(123,123,123,0.05)', "+1");
+                let committedDataset = newDataSet("Committed (" + unit + ")", committed, 'rgba(243,101,12,0.75)', 'rgba(243,101,12,0.1)', true);
+                datasets = [reservedDataset, committedDataset]
+            }
 
             return {
                 labels: labels,
                 title: type,
-                datasets: [reservedDataset, committedDataset]
+                datasets: datasets
             };
         }
         return null
@@ -121,19 +161,19 @@
 
     $: total = totalMemory(metrics);
 
-    function newDataSet(label, data, color) {
+    function newDataSet(label, data, borderColor, backgroundColor, fill) {
         let pointRadius
         if (data.length <= 25) {
-            pointRadius = 3;
-        } else {
             pointRadius = 2;
+        } else {
+            pointRadius = 1;
         }
         return {
             label: label,
             data: data,
-            fill: true,
-            backgroundColor: color,
-            borderColor: color,
+            fill: fill,
+            backgroundColor: backgroundColor,
+            borderColor: borderColor,
             pointHoverRadius: 5,
             pointHoverBackgroundColor: "rgb(0, 0, 0)",
             pointHoverBorderColor: "rgba(220, 220, 220, 1)",
@@ -167,7 +207,7 @@
                         }
                     }
                 },
-                scale: { ticks: { precision: 1 } }}}/>
+                scale: { ticks: { precision: 1, beginAtZero: true } }}}/>
             </div>
         {/each}
         {#if !(Array.isArray(charts) && charts.length > 0)}

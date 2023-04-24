@@ -3,7 +3,8 @@
 
     import {
         CategoryScale,
-        Chart as ChartJS, Filler,
+        Chart as ChartJS,
+        Filler,
         Legend,
         LinearScale,
         LineElement,
@@ -64,9 +65,9 @@
             }
 
             charts = charts.sort(function (a, b) {
-                let x = arrayMaxCommitted(a.datasets[1].data);
+                let x = arrayMax(a.datasets[1].data);
                 let xUnitMultiplicator = getChartUnitMultiplicator(a.datasets[1].label)
-                let y = arrayMaxCommitted(b.datasets[1].data);
+                let y = arrayMax(b.datasets[1].data);
                 let yUnitMultiplicator = getChartUnitMultiplicator(b.datasets[1].label)
                 return (y * yUnitMultiplicator) - (x * xUnitMultiplicator);
             });
@@ -86,24 +87,61 @@
         }
     }
 
-    function arrayMaxCommitted(arr) {
+    function arrayMax(arr) {
         return Math.max(...arr);
+    }
+
+    function median(arr) {
+        const mid = Math.floor(arr.length / 2),
+            nums = [...arr].sort((a, b) => a - b);
+        return arr.length % 2 !== 0 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+    }
+
+    function avg(arr) {
+        return arr.reduce((p, c) => p + c, 0) / arr.length;
     }
 
     function reservedCommittedMemoryChart(values, type) {
         if (values !== undefined) {
 
-            let min = Math.pow(2, 63) - 1;
+            let reservedValues = [];
+            let committedValues = [];
+            let usedValues = [];
+            let usedAvailable = false;
+
             for (const v of values) {
-                if (v.reserved < min) {
-                    min = v.reserved
+                reservedValues.push(v.reserved);
+                committedValues.push(v.committed);
+                if (v.used !== undefined) {
+                    usedAvailable = true
+                    usedValues.push(v.used);
                 }
-                if (v.committed < min) {
-                    min = v.committed
-                }
-                if (v.used !== undefined && v.used < min) {
-                    min = v.used
-                }
+            }
+
+            let reservedMin = Math.min(...reservedValues);
+            let reservedMax = Math.max(...reservedValues);
+            let reservedAvg = avg(reservedValues);
+            let reservedMedian = median(reservedValues);
+            let committedMin = Math.min(...committedValues);
+            let committedMax = Math.max(...committedValues);
+            let committedAvg = avg(committedValues);
+            let committedMedian = median(committedValues);
+            let usedMin;
+            let usedMax;
+            let usedAvg;
+            let usedMedian;
+            if (usedAvailable) {
+                usedMin = Math.min(...usedValues);
+                usedMax = Math.max(...usedValues);
+                usedAvg = avg(usedValues);
+                usedMedian = median(usedValues);
+            }
+
+            let min;
+            if (usedAvailable) {
+                min = Math.min(reservedMin, committedMin, usedMin)
+            } else {
+                min = Math.min(reservedMin, committedMin)
             }
 
             let divisor = 1;
@@ -140,13 +178,19 @@
 
             let datasets;
             if (used.length > 0) {
-                let reservedDataset = newDataSet("Reserved (" + unit + ")", reserved, 'rgba(123,123,123,0.75)', 'rgba(123,123,123,0.05)', "+1");
-                let committedDataset = newDataSet("Committed (" + unit + ")", committed, 'rgba(243,101,12,0.75)', 'rgba(243,101,12,0.1)', "+1");
-                let usedDataset = newDataSet(" Used (" + unit + ")", used, 'rgba(125,176,227,0.75)', 'rgba(125,176,227,0.35)', true);
+                let reservedDataset = newDataSet("Reserved (" + unit + ")", unit, reserved, reservedMin / divisor, reservedMax / divisor, reservedAvg / divisor, reservedMedian / divisor,
+                        'rgba(123,123,123,0.75)', 'rgba(123,123,123,0.05)', "+1"
+                    )
+                ;
+                let committedDataset = newDataSet("Committed (" + unit + ")", unit, committed, committedMin / divisor, committedMax / divisor, committedAvg / divisor, committedMedian / divisor,
+                        'rgba(243,101,12,0.75)', 'rgba(243,101,12,0.1)', "+1"
+                    )
+                ;
+                let usedDataset = newDataSet(" Used (" + unit + ")", unit, used, usedMin / divisor, usedMax / divisor, usedAvg / divisor, usedMedian / divisor, 'rgba(125,176,227,0.75)', 'rgba(125,176,227,0.35)', true);
                 datasets = [reservedDataset, committedDataset, usedDataset];
             } else {
-                let reservedDataset = newDataSet("Reserved (" + unit + ")", reserved, 'rgba(123,123,123,0.75)', 'rgba(123,123,123,0.05)', "+1");
-                let committedDataset = newDataSet("Committed (" + unit + ")", committed, 'rgba(243,101,12,0.75)', 'rgba(243,101,12,0.1)', true);
+                let reservedDataset = newDataSet("Reserved (" + unit + ")", unit, reserved, reservedMin / divisor, reservedMax / divisor, reservedAvg / divisor, reservedMedian / divisor, 'rgba(123,123,123,0.75)', 'rgba(123,123,123,0.05)', "+1");
+                let committedDataset = newDataSet("Committed (" + unit + ")", unit, committed, committedMin / divisor, committedMax / divisor, committedAvg / divisor, committedMedian / divisor, 'rgba(243,101,12,0.75)', 'rgba(243,101,12,0.1)', true);
                 datasets = [reservedDataset, committedDataset]
             }
 
@@ -161,7 +205,7 @@
 
     $: total = totalMemory(metrics);
 
-    function newDataSet(label, data, borderColor, backgroundColor, fill) {
+    function newDataSet(label, unit, data, min, max, avg, median, borderColor, backgroundColor, fill) {
         let pointRadius
         if (data.length <= 25) {
             pointRadius = 2;
@@ -180,7 +224,13 @@
             pointHoverBorderWidth: 1,
             pointHitRadius: 10,
             pointRadius: pointRadius,
-            tension: 0.1
+            tension: 0.1,
+            // Custom values
+            unit: unit,
+            min: min,
+            max: max,
+            avg: avg,
+            median: median
         }
     }
 
@@ -190,24 +240,73 @@
     <div class="columns">
         {#each charts as m}
             <div class="column">
-                <Line data={m} class="metric_chart" options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: { duration: 0 },
-                plugins: {
-                    legend: {
-                        display: true,
-                        title: {
+                <div class="chart">
+                    <Line data={m} class="metric_chart" options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 0 },
+                    plugins: {
+                        legend: {
                             display: true,
-                            text: m.title,
-                            font: {
-                                size: 14,
-                                weight: 'bold'
+                            title: {
+                                display: true,
+                                text: m.title,
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                }
                             }
                         }
-                    }
-                },
-                scale: { ticks: { precision: 1, beginAtZero: true } }}}/>
+                    },
+                    scale: { ticks: { precision: 1, beginAtZero: true } }}}/>
+                </div>
+                <div class="chart-values figure-caption">
+                    <div class="chart-values-types">
+                        <br/>
+                        Reserved:<br/>
+                        Committed
+                        {#if m.datasets.length === 3}
+                            <br/>
+                            Used:
+                        {/if}
+                    </div>
+                    <div class="chart-values-column">
+                        Min:<br/>
+                        {m.datasets[0].min.toFixed(2)} {m.datasets[0].unit}<br/>
+                        {m.datasets[1].min.toFixed(2)} {m.datasets[1].unit}
+                        {#if m.datasets.length === 3}
+                            <br/>
+                            {m.datasets[2].min.toFixed(2)} {m.datasets[2].unit}
+                        {/if}
+                    </div>
+                    <div class="chart-values-column">
+                        Max:<br/>
+                        {m.datasets[0].max.toFixed(2)} {m.datasets[0].unit}<br/>
+                        {m.datasets[1].max.toFixed(2)} {m.datasets[1].unit}
+                        {#if m.datasets.length === 3}
+                            <br/>
+                            {m.datasets[2].max.toFixed(2)} {m.datasets[2].unit}
+                        {/if}
+                    </div>
+                    <div class="chart-values-column">
+                        Avg:<br/>
+                        {m.datasets[0].avg.toFixed(2)} {m.datasets[0].unit}<br/>
+                        {m.datasets[1].avg.toFixed(2)} {m.datasets[1].unit}
+                        {#if m.datasets.length === 3}
+                            <br/>
+                            {m.datasets[2].avg.toFixed(2)} {m.datasets[2].unit}
+                        {/if}
+                    </div>
+                    <div class="chart-values-column">
+                        Median:<br/>
+                        {m.datasets[0].median.toFixed(2)} {m.datasets[0].unit}<br/>
+                        {m.datasets[1].median.toFixed(2)} {m.datasets[1].unit}
+                        {#if m.datasets.length === 3}
+                            <br/>
+                            {m.datasets[2].median.toFixed(2)} {m.datasets[2].unit}
+                        {/if}
+                    </div>
+                </div>
             </div>
         {/each}
         {#if !(Array.isArray(charts) && charts.length > 0)}
@@ -226,10 +325,34 @@
 
     .column {
         width: calc(100% / 2);
-        min-height: 300px;
+        min-height: 400px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .chart {
+        flex-grow: 1;
+    }
+
+    .chart-values {
+        display: flex;
+        padding-left: 5px;
+        padding-bottom: 20px;
+        padding-right: 5px;
+    }
+
+    .chart-values-types {
+        margin-left: 50px;
+    }
+
+    .chart-values-column {
+        float: left;
+        margin-left: 15px;
     }
 
     .column :global(.metric_chart) {
-        padding: 5px;
+        padding-left: 5px;
+        padding-top: 5px;
+        padding-right: 5px;
     }
 </style>

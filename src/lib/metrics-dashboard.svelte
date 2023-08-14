@@ -111,7 +111,8 @@
 			for (const v of values) {
 				reservedValues.push(v.reserved);
 				committedValues.push(v.committed);
-				if (v.used !== undefined) {
+				// The check > 0 is a workaround since the resource in the rust code returns 0 as default heap size
+				if (v.used !== undefined && v.used > 0) {
 					usedAvailable = true;
 					usedValues.push(v.used);
 				}
@@ -170,7 +171,7 @@
 				labels.push(d.toLocaleTimeString());
 				reserved.push(v.reserved / divisor);
 				committed.push(v.committed / divisor);
-				if (v.used !== undefined) {
+				if (usedAvailable && v.used !== undefined) {
 					used.push(v.used / divisor);
 				}
 			}

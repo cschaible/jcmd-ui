@@ -165,16 +165,29 @@ fn get_vm_information(pid: &str) -> Result<VmInformation, String> {
                                     heap_size_min = Some(
                                         row.replace(" Heap Min Capacity:", "").trim().to_string(),
                                     )
+                                } else if row.starts_with(" Min Capacity:") {
+                                    // zgc
+                                    heap_size_min =
+                                        Some(row.replace(" Min Capacity:", "").trim().to_string())
                                 } else if row.starts_with(" Heap Initial Capacity:") {
                                     heap_size_init = Some(
                                         row.replace(" Heap Initial Capacity:", "")
                                             .trim()
                                             .to_string(),
                                     )
+                                } else if row.starts_with(" Initial Capacity:") {
+                                    // zgc
+                                    heap_size_init = Some(
+                                        row.replace(" Initial Capacity:", "").trim().to_string(),
+                                    )
                                 } else if row.starts_with(" Heap Max Capacity:") {
                                     heap_size_max = Some(
                                         row.replace(" Heap Max Capacity:", "").trim().to_string(),
                                     )
+                                } else if row.starts_with(" Max Capacity:") {
+                                    // zgc
+                                    heap_size_max =
+                                        Some(row.replace(" Max Capacity:", "").trim().to_string())
                                 }
                             }
                             vm_resources = Some(VmResources {
@@ -224,17 +237,42 @@ fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
             }
 
             let rows: Vec<&str> = output.split('\n').collect();
+            let mut is_shenandoah = false;
             for row in rows {
-                if row.starts_with(" garbage-first") {
-                    heap_size = parse_memory_from_heap_info(row, "used");
+                if row.starts_with("Shenandoah") {
+                    is_shenandoah = true;
+                } else if is_shenandoah && heap_size.is_none() {
+                    // parse used size from second line
+                    heap_size = parse_memory_from_heap_info(row, "used", true);
+                } else if row.starts_with(" ZHeap")
+                    || row.starts_with(" garbage-first")
+                    // def new generation is serial - new gen
+                    || row.starts_with(" def new generation")
+                {
+                    heap_size = parse_memory_from_heap_info(row, "used", false);
+                } else if row.starts_with(" tenured generation") && heap_size.is_some() {
+                    // serial - old gen
+                    let old_gen_size = parse_memory_from_heap_info(row, "used", false);
+                    if let Some(old_gen) = old_gen_size {
+                        heap_size = Some(heap_size.unwrap() + old_gen);
+                    }
+                } else if row.starts_with(" PSYoungGen") {
+                    // parallel - new gen
+                    heap_size = parse_memory_from_heap_info(row, "used", false);
+                } else if row.starts_with(" ParOldGen") && heap_size.is_some() {
+                    // parallel - old gen
+                    let old_gen_size = parse_memory_from_heap_info(row, "used", false);
+                    if let Some(old_gen) = old_gen_size {
+                        heap_size = Some(heap_size.unwrap() + old_gen);
+                    }
                 } else if row.starts_with(" Metaspace") {
-                    metaspace_size = parse_memory_from_heap_info(row, "used");
-                    metaspace_committed = parse_memory_from_heap_info(row, "committed");
-                    metaspace_reserved = parse_memory_from_heap_info(row, "reserved");
+                    metaspace_size = parse_memory_from_heap_info(row, "used", false);
+                    metaspace_committed = parse_memory_from_heap_info(row, "committed", false);
+                    metaspace_reserved = parse_memory_from_heap_info(row, "reserved", false);
                 } else if row.starts_with("  class space") {
-                    class_space_size = parse_memory_from_heap_info(row, "used");
-                    class_space_committed = parse_memory_from_heap_info(row, "committed");
-                    class_space_reserved = parse_memory_from_heap_info(row, "reserved");
+                    class_space_size = parse_memory_from_heap_info(row, "used", false);
+                    class_space_committed = parse_memory_from_heap_info(row, "committed", false);
+                    class_space_reserved = parse_memory_from_heap_info(row, "reserved", false);
                 }
             }
         }
@@ -399,7 +437,7 @@ fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
     }
 }
 
-// TODO columns: https://dzone.com/articles/how-to-read-a-thread-dump
+// Intro to thread dumps: https://dzone.com/articles/how-to-read-a-thread-dump
 #[tauri::command]
 fn get_threads(pid: &str) -> Result<Threads, String> {
     let time = SystemTime::now()
@@ -681,17 +719,28 @@ fn parse_name_reserved_committed(parts: Vec<&str>) -> (Option<String>, Option<u6
     (name, reserved, committed)
 }
 
-fn parse_memory_from_heap_info(row: &str, memory_type: &str) -> Option<u64> {
+fn parse_memory_from_heap_info(row: &str, memory_type: &str, reversed: bool) -> Option<u64> {
     let parts: Vec<&str> = row.split(' ').collect();
     for (i, p) in parts.iter().enumerate() {
         if p == &memory_type {
-            let size_string = parts.get(i + 1).unwrap();
+            let size_index = if reversed { i - 1 } else { i + 1 };
+            let size_string = parts.get(size_index).unwrap();
+            let size_unit_factor = if size_string.contains('K') {
+                1024
+            } else if size_string.contains('M') {
+                1024 * 1024
+            } else if size_string.contains('G') {
+                1024 * 1024 * 1024
+            } else {
+                1
+            };
+
             let size = size_string
-                .replace(['K', ','], "")
+                .replace(['K', 'M', 'G', ','], "")
                 .trim()
                 .parse::<u64>()
                 .unwrap();
-            return Some(size * 1024);
+            return Some(size * size_unit_factor);
         }
     }
     None

@@ -15,6 +15,12 @@
 </div>
 
 <style>
+    .main-page {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+    }
+
     .main-page :global(.jvm-process-list) {
         margin-left: 10px;
         margin-top: 10px;

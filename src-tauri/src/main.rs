@@ -675,6 +675,9 @@ fn calculate_thread_time(e: &str, column: &str) -> f32 {
     e.replace(column, "")
         .replace("ms", "")
         .replace('s', "")
+        // On linux it seem to be required to replace the comma
+        // with a dot to be able to parse the number
+        .replace(',', ".")
         .parse::<f32>()
         .unwrap()
         * factor as f32

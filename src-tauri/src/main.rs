@@ -61,12 +61,35 @@ fn jcmd() -> Command {
     let mut cmd = JCMD.lock().unwrap();
     let mut path = (*cmd).clone();
     if (*cmd).is_empty() {
+        let jcmd: String = "jcmd".to_string();
+        let home_dir = std::env::var("HOME").unwrap_or("".to_string());
+        let jcmd_ui_config = format!("{}/.config/jcmd-ui/config", home_dir);
+        let jcmd_ui_config_path = std::path::Path::new(&jcmd_ui_config);
         let p = match std::env::var("JAVA_HOME") {
             Ok(p) => format!("{}/bin/jcmd", p),
-            Err(_) => match std::env::var("JCMD") {
-                Ok(p) => p,
-                Err(_) => "jcmd".to_string(),
-            },
+            Err(_) => {
+                if jcmd_ui_config_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(jcmd_ui_config_path) {
+                        let lines: Vec<&str> = content.split('\n').collect();
+                        let java_home_paths: Vec<&str> = lines
+                            .into_iter()
+                            .filter(|s| s.starts_with("java.home="))
+                            .collect();
+                        if !java_home_paths.is_empty() {
+                            let jcmd_dir = java_home_paths.first().unwrap().to_string().clone()
+                                [10..]
+                                .to_string();
+                            format!("{}/bin/jcmd", jcmd_dir)
+                        } else {
+                            jcmd
+                        }
+                    } else {
+                        jcmd
+                    }
+                } else {
+                    jcmd
+                }
+            }
         };
         *cmd = p.clone();
         path = p

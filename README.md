@@ -72,15 +72,18 @@ npm run tauri build
 
 ## Run
 
-`jcmd-ui` requires that the `JAVA_HOME` variable is set.
+`jcmd-ui` requires that the `JAVA_HOME` variable is set or being specified in config file.
 
 > :warning: **On macOS it is not sufficient to publish the JAVA_HOME variable in ~/.bashrc or ~/.zshrc** as GUI 
 > applications do not read variables from those files.  
 > **The variable can be exported by using launchctl:**  
 > launchctl setenv JAVA_HOME "&lt;jdk-path&gt;"  
 > This has to be re-applied after each restart of the system.
+ 
+> :information_source: The path to the java home directory can also be provided in the file ~/.config/jcmd-ui/config as follows:  
+> java.home=&lt;jdk-path&gt;
 
-After installing the previously built package and setting the `JAVA_HOME` variable the ui can be started 
+After installing the previously built package the ui can be started 
 (e.g. graphically via launchpad / gnome menu / etc.).
 
 ## Monitor JVM applications

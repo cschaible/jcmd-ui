@@ -62,11 +62,13 @@ git clone https://github.com/cschaible/jcmd-ui.git
 
 ### Downloading build-dependencies
 ```bash
+cd gui
 npm install
 ```
 
 ### Build
 ```bash
+cd gui
 npm run tauri build
 ```
 
@@ -117,6 +119,7 @@ Tauri supports hot-reloading by using the `dev` server to see changes immediatel
 The rust code and frontend-code is automatically re-compiled (depending on what has been changed):
 
 ```bash
+cd gui
 npm run tauri dev
 ```
 

@@ -1,0 +1,12 @@
+[package]
+name = "jcmd_parser"
+version = "0.1.0"
+description = "parser for jcmd"
+authors = ["Christian Schaible"]
+edition = "2021"
+rust-version = "1.71.1"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0.198", features = ["derive"] }

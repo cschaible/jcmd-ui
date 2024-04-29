@@ -1,10 +1,11 @@
 .DS_Store
-node_modules
-gui/build
-gui/.svelte-kit
-gui/package
 .env
 .env.*
 !.env.example
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
+gui/.svelte-kit
+gui/build
+gui/node_modules
+gui/package
+gui/vite.config.js.timestamp-*
+gui/vite.config.ts.timestamp-*
+jcmd-parser/target

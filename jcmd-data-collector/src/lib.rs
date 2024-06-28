@@ -204,7 +204,7 @@ pub fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
                         c.other_metrics.insert(
                             name.clone(),
                             GenericMemoryMetric {
-                                name: name,
+                                name,
                                 values: vec![metric],
                             },
                         );

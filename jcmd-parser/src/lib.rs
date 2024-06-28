@@ -188,7 +188,7 @@ pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMet
     let mut total_memory_metric: Option<TotalMemoryMetricValue> = None;
     let mut thread_memory_metric: Option<ThreadMemoryMetricValue> = None;
     let mut heap_memory_metric: Option<HeapMemoryMetricValue> = None;
-    let mut other_metrics: HashMap<String, GenericMemoryMetric> = HashMap::new();
+    let mut other_metrics: HashMap<String, GenericMemoryMetricValue> = HashMap::new();
 
     for row in rows {
         if row.trim() == "" {
@@ -240,15 +240,10 @@ pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMet
                     };
                     let n = name.unwrap();
                     if !other_metrics.contains_key(&n) {
-                        other_metrics.insert(
-                            n.clone(),
-                            GenericMemoryMetric {
-                                name: n,
-                                values: vec![metric],
-                            },
-                        );
+                        other_metrics.insert(n.clone(), metric);
                     } else {
-                        other_metrics.get_mut(&n).unwrap().values.push(metric);
+                        // Error
+                        println!("metric {} detected twice", n.clone());
                     }
                 } // else ignore
             }
@@ -264,7 +259,7 @@ pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMet
         total_memory_metric,
         thread_memory_metric,
         heap_memory_metric,
-        other_metrics: Default::default(),
+        other_metrics,
     })
 }
 

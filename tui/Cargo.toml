@@ -1,0 +1,11 @@
+[package]
+name = "jcmd_tui"
+version = "0.1.0"
+description = "data collector for jcmd"
+authors = ["Christian Schaible"]
+edition = "2021"
+rust-version = "1.79.0"
+
+[dependencies]
+jcmd_data_collector = { path = "../jcmd-data-collector" }
+ratatui = "0.27.0"

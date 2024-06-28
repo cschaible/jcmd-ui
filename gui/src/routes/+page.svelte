@@ -1,7 +1,7 @@
 <script>
 	import JvmProcessList from '$lib/jvm-process-list.svelte';
 	import JvmProcess from '$lib/jvm-process.svelte';
-	import { Styles } from 'sveltestrap';
+	import { Styles } from '@sveltestrap/sveltestrap';
 
 	let processId;
 	let showProgressSpinner;

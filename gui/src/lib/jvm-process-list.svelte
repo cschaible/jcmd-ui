@@ -1,7 +1,7 @@
 <script>
 	import { invoke } from '@tauri-apps/api/tauri';
 	import { onMount } from 'svelte';
-	import { Dropdown, DropdownItem, DropdownMenu, DropdownToggle, Icon, Spinner } from 'sveltestrap';
+	import { Dropdown, DropdownItem, DropdownMenu, DropdownToggle, Icon, Spinner } from '@sveltestrap/sveltestrap';
 
 	export let error = undefined;
 

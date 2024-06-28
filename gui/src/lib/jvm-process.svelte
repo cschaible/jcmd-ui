@@ -1,6 +1,6 @@
 <script>
 	import { invoke } from '@tauri-apps/api/tauri';
-	import { TabContent, TabPane } from 'sveltestrap';
+	import { TabContent, TabPane } from '@sveltestrap/sveltestrap';
 	import { onDestroy, onMount } from 'svelte';
 	import ProcessInformation from '$lib/process-information.svelte';
 	import MetricsDashboard from '$lib/metrics-dashboard.svelte';

@@ -157,7 +157,8 @@
 				unit = 'KB';
 			}
 
-			if (unit === 'B' || unit === 'KB') {
+			// Filter out charts with small values
+			if (unit === 'B' /*|| unit === 'KB'*/) {
 				return null;
 			}
 

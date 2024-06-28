@@ -13,7 +13,7 @@
 		Tooltip
 	} from 'chart.js';
 
-	import { Button, ButtonGroup, Table } from 'sveltestrap';
+	import { Button, ButtonGroup, Table } from '@sveltestrap/sveltestrap';
 
 	ChartJS.register(
 		Filler,

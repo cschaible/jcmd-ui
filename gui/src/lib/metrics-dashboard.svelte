@@ -34,30 +34,10 @@
 	}
 
 	function otherMemory(m) {
-		if (m !== undefined && m.totalMemory !== undefined && m.totalMemory.values !== undefined) {
+		if (m !== undefined && m.metrics !== undefined && m.metrics.values !== undefined) {
 			charts = [];
-
-			let total = reservedCommittedMemoryChart(m.totalMemory.values, 'Total');
-			if (total != null) {
-				charts = charts.concat(total);
-			}
-			let clazz = reservedCommittedMemoryChart(m.class.values, 'Class');
-			if (clazz != null) {
-				charts = charts.concat(clazz);
-			}
-			let heap = reservedCommittedMemoryChart(m.heap.values, 'Heap');
-			if (heap != null) {
-				charts = charts.concat(heap);
-			}
-			let metaspace = reservedCommittedMemoryChart(m.metaspace.values, 'Metaspace');
-			if (metaspace != null) {
-				charts = charts.concat(metaspace);
-			}
-			let thread = reservedCommittedMemoryChart(m.thread.values, 'Thread');
-			if (thread != null) {
-				charts = charts.concat(thread);
-			}
-			for (let t of m.other) {
+			
+			for (let t of m.metrics) {
 				let o = reservedCommittedMemoryChart(t.values, t.name);
 				if (o != null) {
 					charts = charts.concat(o);
@@ -329,7 +309,7 @@
 					<div class="chart-values-types">
 						<br />
 						Reserved:<br />
-						Committed
+						Committed:
 						{#if m.datasets.length === 3}
 							<br />
 							Used:

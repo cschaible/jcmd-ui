@@ -1,28 +1,24 @@
 #![cfg_attr(
-all(not(debug_assertions), target_os = "windows"),
-windows_subsystem = "windows"
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
 )]
 
+use anyhow::{anyhow, Result};
+use jcmd_parser::NativeMemoryMetricValue;
+pub use jcmd_parser::{parse_heap_info, parse_jvm_processes, parse_native_memory, parse_threads, parse_vm_information, ApplicationThread, JvmHeapInfo, JvmProcesses, JvmThread, ThreadCountMetricValue, VmInformation};
+use once_cell::sync::Lazy;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::process::Command;
 use std::string::ToString;
 use std::sync::Mutex;
 use std::time::SystemTime;
-pub use jcmd_parser::{ApplicationThread, ClassMemoryMetricValue, GenericMemoryMetric, HeapMemoryMetricValue, JvmHeapInfo, JvmProcesses, JvmThread, MetaspaceMemoryMetricValue, parse_heap_info, parse_jvm_processes, parse_native_memory, parse_threads, parse_vm_information, ThreadCountMetricValue, ThreadMemoryMetricValue, TotalMemoryMetricValue, VmInformation};
-
-use once_cell::sync::Lazy;
-use serde::Serialize;
 
 static CACHE: Lazy<Mutex<MetricsCache>> = Lazy::new(|| {
     Mutex::new(MetricsCache {
-        total_memory: NamedMetric::new("Total".to_string()),
-        class_metrics: NamedMetric::new("Class".to_string()),
-        heap_metrics: NamedMetric::new("Heap".to_string()),
-        metaspace_metrics: NamedMetric::new("Metaspace".to_string()),
-        thread_metrics: NamedMetric::new("Thread".to_string()),
+        memory_metrics: HashMap::new(),
         thread_count_metrics_application: NamedMetric::new("ThreadCountApplication".to_string()),
         thread_count_metrics_jvm: NamedMetric::new("ThreadCountJvm".to_string()),
-        other_metrics: HashMap::new(),
     })
 });
 
@@ -33,14 +29,9 @@ static JCMD: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("".to_string()));
 
 pub fn reset() {
     let mut c = CACHE.lock().unwrap();
-    c.class_metrics.values.clear();
-    c.heap_metrics.values.clear();
-    c.metaspace_metrics.values.clear();
-    c.other_metrics.clear();
-    c.total_memory.values.clear();
+    c.memory_metrics.clear();
     c.thread_count_metrics_application.values.clear();
     c.thread_count_metrics_jvm.values.clear();
-    c.thread_metrics.values.clear();
 }
 
 fn jcmd() -> Command {
@@ -83,33 +74,33 @@ fn jcmd() -> Command {
     Command::new(path)
 }
 
-pub fn get_jvm_processes() -> Result<JvmProcesses, String> {
+pub fn get_jvm_processes() -> Result<JvmProcesses> {
     match jcmd().output() {
         Ok(o) => {
             if o.status.success() {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
                 return parse_jvm_processes(output);
             }
-            Err("Data couldn't be read successfully".to_string())
+            Err(anyhow!("Data couldn't be read successfully".to_string()))
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(anyhow!(e.to_string())),
     }
 }
 
-pub fn get_vm_information(pid: &str) -> Result<VmInformation, String> {
+pub fn get_vm_information(pid: &str) -> Result<VmInformation> {
     match jcmd().arg(pid).arg("VM.info").output() {
         Ok(o) => {
             if o.status.success() {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
                 return parse_vm_information(output);
             }
-            Err("Data couldn't be read successfully".to_string())
+            Err(anyhow!("Data couldn't be read successfully".to_string()))
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(anyhow!(e.to_string())),
     }
 }
 
-pub fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
+pub fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics> {
     let time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -121,34 +112,23 @@ pub fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
         Ok(o) => {
             let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
             heap_info = parse_heap_info(output)?;
-            let class_memory_metric = ClassMemoryMetricValue {
+            let class_memory_metric = NativeMemoryMetricValue {
                 time,
                 reserved: heap_info.class_space_reserved,
                 committed: heap_info.class_space_committed,
-                class_count: 0,
                 used: heap_info.class_space_size,
             };
-            CACHE
-                .lock()
-                .unwrap()
-                .class_metrics
-                .values
-                .push(class_memory_metric);
+            add_or_update_metric("Class".to_string(), class_memory_metric);
 
-            let metaspace_memory_metric = MetaspaceMemoryMetricValue {
+            let metaspace_memory_metric = NativeMemoryMetricValue {
                 time,
                 reserved: heap_info.metaspace_reserved,
                 committed: heap_info.metaspace_committed,
                 used: heap_info.metaspace_size,
             };
-            CACHE
-                .lock()
-                .unwrap()
-                .metaspace_metrics
-                .values
-                .push(metaspace_memory_metric);
+            add_or_update_metric("Metaspace".to_string(), metaspace_memory_metric);
         }
-        Err(e) => return Err(e.to_string()),
+        Err(e) => return Err(anyhow!(e.to_string())),
     };
     match jcmd()
         .arg(pid)
@@ -160,78 +140,57 @@ pub fn get_jvm_metrics(pid: &str) -> Result<JvmMetrics, String> {
             if o.status.success() {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
                 if output.contains("IOException: No such process") {
-                    return Err("No such process".to_string());
+                    return Err(anyhow!("No such process".to_string()));
                 } else if output.contains("Native memory tracking is not enabled") {
                     return Err(
-                        "Native memory tracking not activated. Start application with java \
+                        anyhow!("Native memory tracking not activated. Start application with java \
                     -XX:NativeMemoryTracking=summary -jar ..."
-                            .to_string(),
+                            .to_string()),
                     );
                 }
 
                 let native_memory = parse_native_memory(output, time)?;
-                if let Some(total_memory_metric) = native_memory.total_memory_metric {
-                    CACHE
-                        .lock()
-                        .unwrap()
-                        .total_memory
-                        .values
-                        .push(total_memory_metric)
-                }
-
-                if let Some(thread_memory_metric) = native_memory.thread_memory_metric {
-                    CACHE
-                        .lock()
-                        .unwrap()
-                        .thread_metrics
-                        .values
-                        .push(thread_memory_metric);
-                }
-
-                if let Some(mut heap_memory_metric) = native_memory.heap_memory_metric {
-                    heap_memory_metric.used = heap_info.heap_size;
-                    CACHE
-                        .lock()
-                        .unwrap()
-                        .heap_metrics
-                        .values
-                        .push(heap_memory_metric);
-                }
-
-                for (name, metric) in native_memory.other_metrics {
-                    let mut c = CACHE.lock().unwrap();
-                    if !c.other_metrics.contains_key(&name) {
-                        c.other_metrics.insert(
-                            name.clone(),
-                            GenericMemoryMetric {
-                                name,
-                                values: vec![metric],
-                            },
-                        );
-                    } else {
-                        c.other_metrics.get_mut(&name).unwrap().values.push(metric);
+                for (name, mut metric) in native_memory.metrics {
+                    // Class metrics are taken from GC.heap_info above
+                    if name == "Class" {
+                        continue
                     }
+                    // Merge "used" heap size from GC.heap_info above
+                    if name == "Heap" {
+                        metric.used = heap_info.heap_size
+                    }
+                    add_or_update_metric(name.to_string(), metric);
                 }
 
                 let c = CACHE.lock().unwrap();
                 let jvm_metrics = JvmMetrics {
-                    total_memory: c.total_memory.clone(),
-                    class: c.class_metrics.clone(),
-                    heap: c.heap_metrics.clone(),
-                    metaspace: c.metaspace_metrics.clone(),
-                    thread: c.thread_metrics.clone(),
-                    other: c.other_metrics.values().cloned().collect(),
+                    metrics: c.memory_metrics.iter().map(|m| NamedMetric {
+                        name: m.0.clone(),
+                        values: m.1.clone(),
+                    }).collect(),
                 };
                 return Ok(jvm_metrics);
             }
-            Err("Data couldn't be read successfully".to_string())
+            Err(anyhow!("Data couldn't be read successfully".to_string()))
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(anyhow!(e.to_string())),
+    }
+}
+
+fn add_or_update_metric(name: String, metric: NativeMemoryMetricValue) {
+    let mut c = CACHE.lock().unwrap();
+    if !c.memory_metrics.contains_key(&name) {
+        c.memory_metrics.insert(
+            name.clone(),
+            vec![metric],
+        );
+    } else {
+        c.memory_metrics.get_mut(&name).unwrap().push(metric);
     }
 }
 
 // Intro to thread dumps: https://dzone.com/articles/how-to-read-a-thread-dump
-pub fn get_threads(pid: &str) -> Result<Threads, String> {
+pub fn get_threads(pid: &str) -> Result<Threads> {
     let time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
@@ -264,7 +223,7 @@ pub fn get_threads(pid: &str) -> Result<Threads, String> {
                 thread_count_jvm: c.thread_count_metrics_jvm.clone(),
             })
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(anyhow!(e.to_string())),
     }
 }
 
@@ -290,23 +249,18 @@ fn update_thread_cache(cpu: f32, name: String, jvm_tread: bool) -> f32 {
 }
 
 struct MetricsCache {
-    total_memory: NamedMetric<TotalMemoryMetricValue>,
-    class_metrics: NamedMetric<ClassMemoryMetricValue>,
-    heap_metrics: NamedMetric<HeapMemoryMetricValue>,
-    metaspace_metrics: NamedMetric<MetaspaceMemoryMetricValue>,
-    thread_metrics: NamedMetric<ThreadMemoryMetricValue>,
+    memory_metrics: HashMap<String, Vec<NativeMemoryMetricValue>>,
     thread_count_metrics_application: NamedMetric<ThreadCountMetricValue>,
     thread_count_metrics_jvm: NamedMetric<ThreadCountMetricValue>,
-    other_metrics: HashMap<String, GenericMemoryMetric>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialOrd, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Threads {
-    application_threads: Vec<ApplicationThread>,
-    jvm_threads: Vec<JvmThread>,
-    thread_count_application: NamedMetric<ThreadCountMetricValue>,
-    thread_count_jvm: NamedMetric<ThreadCountMetricValue>,
+    pub application_threads: Vec<ApplicationThread>,
+    pub jvm_threads: Vec<JvmThread>,
+    pub thread_count_application: NamedMetric<ThreadCountMetricValue>,
+    pub thread_count_jvm: NamedMetric<ThreadCountMetricValue>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -316,22 +270,17 @@ pub struct ThreadCacheEntry {
     cpu: f32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JvmMetrics {
-    total_memory: NamedMetric<TotalMemoryMetricValue>,
-    class: NamedMetric<ClassMemoryMetricValue>,
-    heap: NamedMetric<HeapMemoryMetricValue>,
-    metaspace: NamedMetric<MetaspaceMemoryMetricValue>,
-    thread: NamedMetric<ThreadMemoryMetricValue>,
-    other: Vec<GenericMemoryMetric>,
+    pub metrics: Vec<NamedMetric<NativeMemoryMetricValue>>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NamedMetric<T> {
-    name: String,
-    values: Vec<T>,
+    pub name: String,
+    pub values: Vec<T>,
 }
 
 impl<T> NamedMetric<T> {

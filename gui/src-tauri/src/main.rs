@@ -26,21 +26,33 @@ fn reset() {
 
 #[tauri::command]
 fn get_jvm_processes() -> Result<JvmProcesses, String> {
-    jcmd_data_collector::get_jvm_processes()
+    match jcmd_data_collector::get_jvm_processes() {
+        Ok(r) => Ok(r),
+        Err(e) => Err(e.to_string())
+    }
 }
 
 #[tauri::command]
 fn get_vm_information(pid: &str) -> Result<VmInformation, String> {
-    jcmd_data_collector::get_vm_information(pid)
+    match jcmd_data_collector::get_vm_information(pid) {
+        Ok(r) => Ok(r),
+        Err(e) => Err(e.to_string())
+    }
 }
 
 #[tauri::command]
 fn get_jvm_metrics(pid: &str) -> Result<jcmd_data_collector::JvmMetrics, String> {
-    jcmd_data_collector::get_jvm_metrics(pid)
+    match jcmd_data_collector::get_jvm_metrics(pid) {
+        Ok(r) => Ok(r),
+        Err(e) => Err(e.to_string())
+    }
 }
 
 // Intro to thread dumps: https://dzone.com/articles/how-to-read-a-thread-dump
 #[tauri::command]
 fn get_threads(pid: &str) -> Result<jcmd_data_collector::Threads, String> {
-    jcmd_data_collector::get_threads(pid)
+    match jcmd_data_collector::get_threads(pid) {
+        Ok(r) => Ok(r),
+        Err(e) => Err(e.to_string())
+    }
 }

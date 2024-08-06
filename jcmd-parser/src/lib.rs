@@ -1,12 +1,14 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
+use anyhow::{anyhow, Result};
 use serde::Serialize;
 
-pub fn parse_jvm_processes(output: String) -> Result<JvmProcesses, String> {
+pub fn parse_jvm_processes(output: String) -> Result<JvmProcesses> {
     let lines: Vec<&str> = output.split('\n').collect();
     let mut processes: Vec<JvmProcessRef> = Vec::new();
     for line in lines {
-        if (line).contains("jdk.jcmd") {
+        if line.contains("jdk.jcmd") {
             continue;
         }
         let parts: Vec<&str> = line.split(' ').collect();
@@ -39,7 +41,7 @@ pub fn parse_jvm_processes(output: String) -> Result<JvmProcesses, String> {
     Ok(JvmProcesses { processes })
 }
 
-pub fn parse_vm_information(output: String) -> Result<VmInformation, String> {
+pub fn parse_vm_information(output: String) -> Result<VmInformation> {
     let blocks: Vec<&str> = output.split("\n\n").collect();
 
     let mut vm_arguments = None;
@@ -114,7 +116,7 @@ pub fn parse_vm_information(output: String) -> Result<VmInformation, String> {
     })
 }
 
-pub fn parse_heap_info(output: String) -> Result<JvmHeapInfo, String> {
+pub fn parse_heap_info(output: String) -> Result<JvmHeapInfo> {
     let mut heap_size = None;
     let mut metaspace_size = None;
     let mut class_space_size = None;
@@ -127,7 +129,7 @@ pub fn parse_heap_info(output: String) -> Result<JvmHeapInfo, String> {
     let mut class_space_reserved = None;
 
     if output.contains("IOException: No such process") {
-        return Err("No such process".to_string());
+        return Err(anyhow!("No such process".to_string()));
     }
 
     let rows: Vec<&str> = output.split('\n').collect();
@@ -181,14 +183,11 @@ pub fn parse_heap_info(output: String) -> Result<JvmHeapInfo, String> {
     })
 }
 
-pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMetrics, String> {
+pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMetrics> {
     let rows: Vec<&str> = output.split('\n').collect();
     let mut buffer: Vec<String> = Vec::new();
 
-    let mut total_memory_metric: Option<TotalMemoryMetricValue> = None;
-    let mut thread_memory_metric: Option<ThreadMemoryMetricValue> = None;
-    let mut heap_memory_metric: Option<HeapMemoryMetricValue> = None;
-    let mut other_metrics: HashMap<String, GenericMemoryMetricValue> = HashMap::new();
+    let mut metrics: HashMap<String, NativeMemoryMetricValue> = HashMap::new();
 
     for row in rows {
         if row.trim() == "" {
@@ -196,23 +195,27 @@ pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMet
                 if buffer_row.starts_with("Total:") {
                     let total_memory_parts: Vec<&str> = buffer_row.split(' ').collect();
                     let (reserved, committed) = parse_reserved_committed(total_memory_parts);
-                    total_memory_metric = Some(TotalMemoryMetricValue {
+                    let metric = NativeMemoryMetricValue {
                         time,
                         reserved,
                         committed,
-                    });
+                        used: None,
+                    };
+                    add_metric(&mut metrics, metric, "Total".to_string());
                 } else if buffer_row.starts_with('-') && buffer_row.contains("Thread") {
                     let cleaned_row = buffer_row
                         .replace(['(', ')', ','], "")
                         .replace("Thread", "");
                     let values: Vec<&str> = cleaned_row.split(' ').collect();
+
                     let (reserved, committed) = parse_reserved_committed(values);
-                    thread_memory_metric = Some(ThreadMemoryMetricValue {
+                    let metric = NativeMemoryMetricValue {
                         time,
                         reserved,
                         committed,
-                        thread_count: 0,
-                    });
+                        used: None,
+                    };
+                    add_metric(&mut metrics, metric, "Thread".to_string());
                 } else if buffer_row.starts_with('-') && buffer_row.contains("Java Heap") {
                     let cleaned_row = buffer_row
                         .replace(['(', ')', ','], "")
@@ -220,12 +223,13 @@ pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMet
                     let values: Vec<&str> = cleaned_row.split(' ').collect();
 
                     let (reserved, committed) = parse_reserved_committed(values);
-                    heap_memory_metric = Some(HeapMemoryMetricValue {
+                    let metric = NativeMemoryMetricValue {
                         time,
                         reserved,
                         committed,
-                        used: None, //heap_size,
-                    });
+                        used: None,
+                    };
+                    add_metric(&mut metrics, metric, "Heap".to_string());
                 } else if buffer_row.starts_with('-') && buffer_row.contains("Metaspace") {
                     // do nothing - metric collected in heap info
                 } else if buffer_row.starts_with('-') {
@@ -233,18 +237,13 @@ pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMet
                     let values: Vec<&str> = cleaned_row.split(' ').collect();
 
                     let (name, reserved, committed) = parse_name_reserved_committed(values);
-                    let metric = GenericMemoryMetricValue {
+                    let metric = NativeMemoryMetricValue {
                         time,
                         reserved,
                         committed,
+                        used: None,
                     };
-                    let n = name.unwrap();
-                    if !other_metrics.contains_key(&n) {
-                        other_metrics.insert(n.clone(), metric);
-                    } else {
-                        // Error
-                        println!("metric {} detected twice", n.clone());
-                    }
+                    add_metric(&mut metrics, metric, name.unwrap());
                 } // else ignore
             }
 
@@ -255,15 +254,23 @@ pub fn parse_native_memory(output: String, time: u128) -> Result<NativeMemoryMet
         }
     }
 
-    Ok(NativeMemoryMetrics {
-        total_memory_metric,
-        thread_memory_metric,
-        heap_memory_metric,
-        other_metrics,
-    })
+    Ok(NativeMemoryMetrics { metrics })
 }
 
-pub fn parse_threads(output: String, time: u128) -> Result<ThreadMetrics, String> {
+fn add_metric(
+    metrics: &mut HashMap<String, NativeMemoryMetricValue>,
+    metric: NativeMemoryMetricValue,
+    name: String,
+) {
+    if let Entry::Vacant(e) = metrics.entry(name.clone()) {
+        e.insert(metric);
+    } else {
+        // Error
+        println!("metric {} detected twice", name);
+    }
+}
+
+pub fn parse_threads(output: String, time: u128) -> Result<ThreadMetrics> {
     let blocks: Vec<&str> = output.split("\n\n").collect();
 
     let mut new_thread_count_application = 0;
@@ -549,7 +556,7 @@ fn parse_memory_from_heap_info(row: &str, memory_type: &str, reversed: bool) -> 
     None
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialOrd, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationThread {
     pub name: String,
@@ -568,7 +575,7 @@ pub struct ApplicationThread {
     pub last_known_java_stack_pointer: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialOrd, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JvmThread {
     pub name: String,
@@ -580,7 +587,7 @@ pub struct JvmThread {
     pub status: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialOrd, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadMetrics {
     pub application_threads: Vec<ApplicationThread>,
@@ -624,57 +631,22 @@ pub struct JvmHeapInfo {
     pub class_space_reserved: Option<u64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativeMemoryMetrics {
-    pub total_memory_metric: Option<TotalMemoryMetricValue>,
-    pub thread_memory_metric: Option<ThreadMemoryMetricValue>,
-    pub heap_memory_metric: Option<HeapMemoryMetricValue>,
-    pub other_metrics: HashMap<String, GenericMemoryMetricValue>,
+    pub metrics: HashMap<String, NativeMemoryMetricValue>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GenericMemoryMetric {
-    pub name: String,
-    pub values: Vec<GenericMemoryMetricValue>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GenericMemoryMetricValue {
-    pub time: u128,
-    pub reserved: Option<u64>,
-    pub committed: Option<u64>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClassMemoryMetricValue {
-    pub time: u128,
-    pub class_count: u32,
-    pub reserved: Option<u64>,
-    pub committed: Option<u64>,
-    pub used: Option<u64>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MetaspaceMemoryMetricValue {
+pub struct NativeMemoryMetricValue {
     pub time: u128,
     pub reserved: Option<u64>,
     pub committed: Option<u64>,
     pub used: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HeapMemoryMetricValue {
-    pub time: u128,
-    pub reserved: Option<u64>,
-    pub committed: Option<u64>,
-    pub used: Option<u64>,
-}
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadCountMetricValue {
     pub time: u128,
@@ -685,29 +657,12 @@ pub struct ThreadCountMetricValue {
     pub blocked_count: u32,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadMemoryMetricValue {
-    pub time: u128,
-    pub thread_count: u32,
-    pub reserved: Option<u64>,
-    pub committed: Option<u64>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TotalMemoryMetricValue {
-    pub time: u128,
-    pub reserved: Option<u64>,
-    pub committed: Option<u64>,
-}
-
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize)]
 pub struct JvmProcesses {
     pub processes: Vec<JvmProcessRef>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize)]
 pub struct JvmProcessRef {
     pub id: String,
     pub name: String,

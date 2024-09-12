@@ -1,7 +1,10 @@
 use crate::ui::application_threads_tab::ApplicationThreadTab;
 use crate::ui::jvm_threads_tab::JvmThreadTab;
 use crate::ui::memory_tab::MemoryTab;
-use jcmd_data_collector::{JvmMetrics, Threads, VmInformation};
+use clap::{arg, Parser};
+use jcmd_data_collector::{
+    DataCollector, DefaultDataCollector, JvmMetrics, Threads, VmInformation,
+};
 use jcmd_parser::JvmProcesses;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
@@ -22,7 +25,6 @@ use std::time::{Duration, Instant};
 use ui::process_information_tab::ProcessInformationTab;
 use ui::processes::JvmProcessesPopup;
 
-mod cmd;
 mod ui;
 
 #[derive(PartialEq)]
@@ -31,12 +33,22 @@ enum CurrentView {
     ProcessSelection,
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let tick_rate = Duration::from_millis(250);
-    run(tick_rate)
+/// JCMD Terminal UI
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Attach to the given remote jvm process id (PID) via jattach
+    #[arg(long = "attach")]
+    pid: Option<String>,
 }
 
-pub fn run(tick_rate: Duration) -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+    let tick_rate = Duration::from_millis(250);
+    run(tick_rate, args)
+}
+
+fn run(tick_rate: Duration, args: Args) -> Result<(), Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -46,6 +58,8 @@ pub fn run(tick_rate: Duration) -> Result<(), Box<dyn Error>> {
 
     // create app and run it
     let res = run_app(&mut terminal, tick_rate);
+
+    println!("{:?}", args.pid);
 
     // restore terminal
     disable_raw_mode()?;
@@ -92,7 +106,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration) -> anyho
     let mut process_selection_popup = JvmProcessesPopup::new();
     let process_selection_sender = process_selection_popup.new_sender();
     let mut processes_tick = Instant::now();
-    let mut last_known_pid = "".to_string();
+    let mut data_collector: DefaultDataCollector = DefaultDataCollector::new();
 
     loop {
         terminal.draw(|f| {
@@ -118,9 +132,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration) -> anyho
                     } else if current_view == CurrentView::ProcessDetails {
                         match key.code {
                             KeyCode::Char('q') => should_quit = true,
-                            KeyCode::Char('p') => {
-                                current_view = CurrentView::ProcessSelection
-                            }
+                            KeyCode::Char('p') => current_view = CurrentView::ProcessSelection,
                             _ => tab_view.on_key(key.code),
                         }
                     }
@@ -138,26 +150,32 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration) -> anyho
         drop(pid_lock);
 
         if current_view == CurrentView::ProcessDetails && !pid.is_empty() {
-            update_memory_metrics(
-                pid.to_string(),
-                &memory_sender,
-                &mut memory_tick,
-                memory_tick_rate,
-            )?;
-            update_threads(
-                pid.to_string(),
-                &application_thread_sender,
-                &jvm_thread_sender,
-                &mut threads_tick,
-                threads_tick_rate,
-            )?;
-            if last_known_pid != pid {
-                update_vm_information(pid.to_string(), &process_information_sender)?;
-                last_known_pid = pid;
+            if data_collector.get_pid().is_none() || data_collector.get_pid().unwrap() != pid {
+                data_collector.set_pid(pid.clone());
+                update_vm_information(&process_information_sender, &data_collector)?;
+            }
+            if data_collector.get_pid().is_some() {
+                update_memory_metrics(
+                    &memory_sender,
+                    &mut memory_tick,
+                    memory_tick_rate,
+                    &data_collector,
+                )?;
+                update_threads(
+                    &application_thread_sender,
+                    &jvm_thread_sender,
+                    &mut threads_tick,
+                    threads_tick_rate,
+                    &data_collector,
+                )?;
             }
         }
         if current_view == CurrentView::ProcessSelection {
-            update_processes(&process_selection_sender, &mut processes_tick)?;
+            update_processes(
+                &process_selection_sender,
+                &mut processes_tick,
+                &data_collector,
+            )?;
         }
 
         if should_quit {
@@ -166,9 +184,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration) -> anyho
     }
 }
 
-fn update_processes(sender: &Sender<JvmProcesses>, last_tick: &mut Instant) -> anyhow::Result<()> {
+fn update_processes(
+    sender: &Sender<JvmProcesses>,
+    last_tick: &mut Instant,
+    collector: &DefaultDataCollector,
+) -> anyhow::Result<()> {
     if last_tick.elapsed() >= Duration::from_secs(1) {
-        let processes = cmd::get_jvm_processes()?;
+        let processes = collector.get_jvm_processes()?;
         sender.send(processes)?;
         *last_tick = Instant::now();
     }
@@ -176,13 +198,13 @@ fn update_processes(sender: &Sender<JvmProcesses>, last_tick: &mut Instant) -> a
 }
 
 fn update_memory_metrics(
-    pid: String,
     sender: &Sender<JvmMetrics>,
     last_tick: &mut Instant,
     tick_rate: Duration,
+    collector: &DefaultDataCollector,
 ) -> anyhow::Result<()> {
     if last_tick.elapsed() >= tick_rate {
-        let metrics = cmd::get_jvm_metrics(pid)?;
+        let metrics = collector.get_jvm_metrics()?;
         sender.send(metrics)?;
         *last_tick = Instant::now()
     }
@@ -190,14 +212,14 @@ fn update_memory_metrics(
 }
 
 fn update_threads(
-    pid: String,
     application_thread_sender: &Sender<Threads>,
     jvm_thread_sender: &Sender<Threads>,
     last_tick: &mut Instant,
     tick_rate: Duration,
+    collector: &DefaultDataCollector,
 ) -> anyhow::Result<()> {
     if last_tick.elapsed() >= tick_rate {
-        let threads = cmd::get_thread_metrics(pid)?;
+        let threads = collector.get_threads()?;
         application_thread_sender.send(threads.clone())?;
         jvm_thread_sender.send(threads)?;
         *last_tick = Instant::now()
@@ -205,8 +227,11 @@ fn update_threads(
     Ok(())
 }
 
-fn update_vm_information(pid: String, sender: &Sender<VmInformation>) -> anyhow::Result<()> {
-    let info = cmd::get_vm_information(pid)?;
+fn update_vm_information(
+    sender: &Sender<VmInformation>,
+    collector: &DefaultDataCollector,
+) -> anyhow::Result<()> {
+    let info = collector.get_vm_information()?;
     sender.send(info)?;
     Ok(())
 }

@@ -1,13 +1,14 @@
 [package]
 name = "jcmd_tui"
 version = "0.1.0"
-description = "data collector for jcmd"
+description = "jcmd_tui is a terminal ui for jdk's jcmd utility"
 authors = ["Christian Schaible"]
 edition = "2021"
 rust-version = "1.79.0"
 
 [dependencies]
 anyhow = "1.0.86"
+clap = { version = "4.5.17", features = ["derive"]}
 jcmd_parser = { path = "../jcmd-parser" }
 jcmd_data_collector = { path = "../jcmd-data-collector" }
 rand = "0.8.5"

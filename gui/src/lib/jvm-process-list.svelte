@@ -35,12 +35,13 @@
 		selectedProcess = item;
 		showProgressSpinner = true;
 		error = undefined;
-		resetCache();
+		resetCache(processId);
 		return true;
 	}
 
-	function resetCache() {
+	function resetCache(processId) {
 		invoke('reset');
+		invoke('set_pid', {pid: processId}).catch((e) => (error = e))
 	}
 
 	let color = 'secondary';

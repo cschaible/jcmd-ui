@@ -1,0 +1,8 @@
+.idea
+docs
+gui
+jcmd-data-collector/target
+jcmd-parser/target
+tui/target
+.gitignore
+README.md

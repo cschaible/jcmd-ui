@@ -4,15 +4,15 @@
 )]
 
 use anyhow::{anyhow, Result};
-use jcmd_parser::NativeMemoryMetricValue;
 pub use jcmd_parser::{
     parse_heap_info, parse_jvm_processes, parse_native_memory, parse_threads, parse_vm_information,
     ApplicationThread, JvmHeapInfo, JvmProcesses, JvmThread, ThreadCountMetricValue, VmInformation,
 };
+use jcmd_parser::{JvmProcessRef, NativeMemoryMetricValue};
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::process::Command;
+use std::process::{Command, Output};
 use std::string::ToString;
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -30,19 +30,80 @@ static THREAD_CACHE: Lazy<Mutex<HashMap<String, ThreadCacheEntry>>> =
 
 static JCMD: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("".to_string()));
 
-pub trait DataCollector: Sync + Send {
-    fn get_vm_information(&self) -> Result<VmInformation>;
-    fn get_jvm_metrics(&self) -> Result<JvmMetrics>;
-    fn get_threads(&self) -> Result<Threads>;
+pub struct JCommandBuilder {
+    pid: Option<String>,
+    attached: bool,
+    args: Vec<String>,
 }
+
+impl JCommandBuilder {
+    fn new() -> Self {
+        JCommandBuilder {
+            pid: None,
+            attached: false,
+            args: Vec::new(),
+        }
+    }
+
+    fn new_attached(pid: String) -> Self {
+        JCommandBuilder {
+            pid: Some(pid),
+            attached: true,
+            args: Vec::new(),
+        }
+    }
+
+    fn arg(&mut self, arg: String) -> &mut Self {
+        self.args.push(arg);
+        self
+    }
+
+    fn execute(&mut self) -> std::io::Result<Output> {
+        if self.attached {
+            let mut jattach = jattach();
+            let mut command = jattach.arg(self.pid.clone().unwrap()).arg("jcmd");
+            for arg in &self.args {
+                command = command.arg(arg);
+            }
+            command.output()
+        } else {
+            let mut jcmd = jcmd();
+            let mut command = &mut jcmd;
+            for arg in &self.args {
+                command = command.arg(arg);
+            }
+            command.output()
+        }
+    }
+}
+
 
 pub struct DefaultDataCollector {
     pid: Option<String>,
+    is_attached: bool,
 }
 
+impl Default for DefaultDataCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+
 impl DefaultDataCollector {
-    pub fn new() -> DefaultDataCollector {
-        DefaultDataCollector { pid: None }
+    pub fn new() -> Self {
+        DefaultDataCollector {
+            pid: None,
+            is_attached: false,
+        }
+    }
+
+
+    pub fn new_attach(pid: String) -> Self {
+        DefaultDataCollector {
+            pid: Some(pid),
+            is_attached: true,
+        }
     }
 
     pub fn get_pid(&self) -> Option<String> {
@@ -50,19 +111,31 @@ impl DefaultDataCollector {
     }
 
     pub fn set_pid(&mut self, pid: String) {
-        self.pid = Some(pid);
+        if !self.is_attached {
+            self.pid = Some(pid.clone());
+        }
     }
 
     pub fn get_jvm_processes(&self) -> Result<JvmProcesses> {
-        match jcmd().output() {
-            Ok(o) => {
-                if o.status.success() {
-                    let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
-                    return parse_jvm_processes(output);
+        if self.is_attached {
+            Ok(JvmProcesses {
+                processes: vec![JvmProcessRef {
+                    id: self.pid.clone().unwrap(),
+                    name: "Remote process".to_string(),
+                    path: None,
+                }]
+            })
+        } else {
+            match JCommandBuilder::new().execute() {
+                Ok(o) => {
+                    if o.status.success() {
+                        let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
+                        return parse_jvm_processes(output);
+                    }
+                    Err(anyhow!("Data couldn't be read successfully".to_string()))
                 }
-                Err(anyhow!("Data couldn't be read successfully".to_string()))
+                Err(e) => Err(anyhow!(e.to_string())),
             }
-            Err(e) => Err(anyhow!(e.to_string())),
         }
     }
 
@@ -72,17 +145,31 @@ impl DefaultDataCollector {
         c.thread_count_metrics_application.values.clear();
         c.thread_count_metrics_jvm.values.clear();
     }
-}
 
-impl DataCollector for DefaultDataCollector {
-    fn get_vm_information(&self) -> Result<VmInformation> {
+    fn execute(&self, args: Vec<&str>) -> Result<Output> {
         if self.pid.is_none() {
             return Err(anyhow!("No pid specified"));
         }
-        match jcmd()
-            .arg(self.pid.clone().unwrap())
-            .arg("VM.info")
-            .output()
+        let mut command_builder: JCommandBuilder;
+        let mut command: &mut JCommandBuilder;
+        if self.is_attached {
+            command_builder = JCommandBuilder::new_attached(self.get_pid().unwrap());
+            command = &mut command_builder;
+        } else {
+            command_builder = JCommandBuilder::new();
+            command = command_builder.arg(self.pid.clone().unwrap());
+        }
+
+        for arg in args {
+            command = command.arg(arg.to_string());
+        }
+
+        Ok(command.execute()?)
+    }
+
+
+    pub fn get_vm_information(&self) -> Result<VmInformation> {
+        match self.execute(vec!["VM.info"])
         {
             Ok(o) => {
                 if o.status.success() {
@@ -95,11 +182,7 @@ impl DataCollector for DefaultDataCollector {
         }
     }
 
-    fn get_jvm_metrics(&self) -> Result<JvmMetrics> {
-        if self.pid.is_none() {
-            return Err(anyhow!("No pid specified"));
-        }
-
+    pub fn get_jvm_metrics(&self) -> Result<JvmMetrics> {
         let time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -107,10 +190,7 @@ impl DataCollector for DefaultDataCollector {
 
         let heap_info: JvmHeapInfo;
 
-        match jcmd()
-            .arg(self.pid.clone().unwrap())
-            .arg("GC.heap_info")
-            .output()
+        match self.execute(vec!["GC.heap_info"])
         {
             Ok(o) => {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
@@ -133,11 +213,8 @@ impl DataCollector for DefaultDataCollector {
             }
             Err(e) => return Err(anyhow!(e.to_string())),
         };
-        match jcmd()
-            .arg(self.pid.clone().unwrap())
-            .arg("VM.native_memory")
-            .arg("scale=b")
-            .output()
+
+        match self.execute(vec!["VM.native_memory", "scale=b"])
         {
             Ok(o) => {
                 if o.status.success() {
@@ -185,20 +262,13 @@ impl DataCollector for DefaultDataCollector {
     }
 
     // Intro to thread dumps: https://dzone.com/articles/how-to-read-a-thread-dump
-    fn get_threads(&self) -> Result<Threads> {
-        if self.pid.is_none() {
-            return Err(anyhow!("No pid specified"));
-        }
-
+    pub fn get_threads(&self) -> Result<Threads> {
         let time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        match jcmd()
-            .arg(self.pid.clone().unwrap())
-            .arg("Thread.print")
-            .arg("-e")
-            .output()
+
+        match self.execute(vec!["Thread.print", "-e"])
         {
             Ok(o) => {
                 let output = String::from_utf8_lossy(o.stdout.as_slice()).to_string();
@@ -240,6 +310,17 @@ impl DataCollector for DefaultDataCollector {
             Err(e) => Err(anyhow!(e.to_string())),
         }
     }
+}
+
+fn jattach() -> Command {
+    let mut cmd = JCMD.lock().unwrap();
+    let mut path = (*cmd).clone();
+    if (*cmd).is_empty() {
+        let p = "jattach".to_string();
+        *cmd = p.clone();
+        path = p;
+    }
+    Command::new(path)
 }
 
 fn jcmd() -> Command {

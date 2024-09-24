@@ -2,9 +2,7 @@ use crate::ui::application_threads_tab::ApplicationThreadTab;
 use crate::ui::jvm_threads_tab::JvmThreadTab;
 use crate::ui::memory_tab::MemoryTab;
 use clap::{arg, Parser};
-use jcmd_data_collector::{
-    DataCollector, DefaultDataCollector, JvmMetrics, Threads, VmInformation,
-};
+use jcmd_data_collector::{DefaultDataCollector, JvmMetrics, Threads, VmInformation};
 use jcmd_parser::JvmProcesses;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
@@ -57,9 +55,7 @@ fn run(tick_rate: Duration, args: Args) -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let res = run_app(&mut terminal, tick_rate);
-
-    println!("{:?}", args.pid);
+    let res = run_app(&mut terminal, tick_rate, args);
 
     // restore terminal
     disable_raw_mode()?;
@@ -77,7 +73,7 @@ fn run(tick_rate: Duration, args: Args) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration) -> anyhow::Result<()> {
+fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration, args: Args) -> anyhow::Result<()> {
     let mut last_tick = Instant::now();
     let mut current_view = CurrentView::ProcessSelection;
 
@@ -106,7 +102,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration) -> anyho
     let mut process_selection_popup = JvmProcessesPopup::new();
     let process_selection_sender = process_selection_popup.new_sender();
     let mut processes_tick = Instant::now();
-    let mut data_collector: DefaultDataCollector = DefaultDataCollector::new();
+    let mut data_collector: DefaultDataCollector=
+    match args.pid {
+        Some(pid) => DefaultDataCollector::new_attach(pid),
+        None => DefaultDataCollector::new(),
+    };
 
     loop {
         terminal.draw(|f| {
@@ -152,22 +152,22 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, tick_rate: Duration) -> anyho
         if current_view == CurrentView::ProcessDetails && !pid.is_empty() {
             if data_collector.get_pid().is_none() || data_collector.get_pid().unwrap() != pid {
                 data_collector.set_pid(pid.clone());
-                update_vm_information(&process_information_sender, &data_collector)?;
             }
             if data_collector.get_pid().is_some() {
-                update_memory_metrics(
+                let _ = update_vm_information(&process_information_sender, &data_collector);
+                let _ = update_memory_metrics(
                     &memory_sender,
                     &mut memory_tick,
                     memory_tick_rate,
                     &data_collector,
-                )?;
-                update_threads(
+                );
+                let _ = update_threads(
                     &application_thread_sender,
                     &jvm_thread_sender,
                     &mut threads_tick,
                     threads_tick_rate,
                     &data_collector,
-                )?;
+                );
             }
         }
         if current_view == CurrentView::ProcessSelection {
